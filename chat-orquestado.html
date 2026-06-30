@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Mi asistente local</title>
+<style>
+  body { margin:0; font-family: system-ui, sans-serif; background:#0f1117; color:#e6e6e6; display:flex; flex-direction:column; height:100vh; }
+  header { padding:14px 20px; background:#161922; border-bottom:1px solid #2a2e3a; }
+  header h1 { font-size:16px; margin:0; font-weight:600; }
+  header p { margin:4px 0 0; font-size:12px; color:#9aa0ad; }
+  #chat { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:14px; }
+  .msg { max-width:75%; padding:10px 14px; border-radius:10px; line-height:1.45; white-space:pre-wrap; font-size:14px; }
+  .user { align-self:flex-end; background:#2a5bd7; color:white; }
+  .assistant { align-self:flex-start; background:#1d212c; border:1px solid #2a2e3a; }
+  .action { align-self:flex-start; background:#1a2e1f; border:1px solid #2c4a33; color:#8ce0a4; font-family:monospace; font-size:12px; padding:8px 12px; border-radius:8px; max-width:80%; }
+  .meta { font-size:11px; color:#6b7180; margin-top:6px; }
+  #inputBar { display:flex; gap:8px; padding:14px 20px; background:#161922; border-top:1px solid #2a2e3a; }
+  #inputBar input { flex:1; padding:10px 14px; border-radius:8px; border:1px solid #2a2e3a; background:#0f1117; color:#e6e6e6; font-size:14px; }
+  #inputBar button { padding:10px 18px; border-radius:8px; border:none; background:#2a5bd7; color:white; cursor:pointer; font-size:14px; }
+  #inputBar button:disabled { background:#3a3f4d; cursor:not-allowed; }
+  #status { font-size:12px; color:#9aa0ad; padding:0 20px 10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Mi asistente local</h1>
+  <p id="serverInfo">Conectando al backend en http://localhost:8001 ...</p>
+</header>
+
+<div id="chat"></div>
+<div id="status"></div>
+
+<div id="inputBar">
+  <input id="userInput" type="text" placeholder="Escribe tu mensaje (puede crear/ejecutar archivos)..." />
+  <button id="sendBtn">Enviar</button>
+</div>
+
+<script>
+const BACKEND_URL = "http://localhost:8001/chat";
+
+const chatEl = document.getElementById('chat');
+const inputEl = document.getElementById('userInput');
+const sendBtn = document.getElementById('sendBtn');
+const statusEl = document.getElementById('status');
+const serverInfoEl = document.getElementById('serverInfo');
+
+let history = [];
+
+function addMessage(role, content) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  div.textContent = content;
+  chatEl.appendChild(div);
+  chatEl.scrollTop = chatEl.scrollHeight;
+  return div;
+}
+
+function addActionLog(action, result) {
+  const div = document.createElement('div');
+  div.className = 'action';
+  div.textContent = "⚙ " + action + "\n→ " + result;
+  chatEl.appendChild(div);
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+async function checkBackend() {
+  try {
+    const res = await fetch("http://localhost:8001/health");
+    const data = await res.json();
+    serverInfoEl.textContent = "Backend activo · workspace: " + data.workspace;
+  } catch (e) {
+    serverInfoEl.textContent = "No se pudo conectar al backend (¿está corriendo backend.py?)";
+  }
+}
+checkBackend();
+
+async function sendMessage() {
+  const text = inputEl.value.trim();
+  if (!text) return;
+
+  addMessage('user', text);
+  inputEl.value = '';
+  sendBtn.disabled = true;
+  statusEl.textContent = "Pensando...";
+
+  const start = performance.now();
+  try {
+    const res = await fetch(BACKEND_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text, history: history })
+    });
+
+    if (!res.ok) {
+      throw new Error("HTTP " + res.status + ": " + await res.text());
+    }
+
+    const data = await res.json();
+
+    if (data.actions && data.actions.length > 0) {
+      for (const act of data.actions) {
+        addActionLog(act.action + "(" + JSON.stringify(act.args) + ")", act.result);
+      }
+    }
+
+    history.push({ role: "user", content: text });
+    history.push({ role: "assistant", content: data.reply });
+
+    const elapsed = ((performance.now() - start) / 1000).toFixed(1);
+    const msgDiv = addMessage('assistant', data.reply);
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = elapsed + "s";
+    msgDiv.appendChild(meta);
+
+    statusEl.textContent = "";
+  } catch (e) {
+    statusEl.textContent = "Error: " + e.message;
+  } finally {
+    sendBtn.disabled = false;
+    inputEl.focus();
+  }
+}
+
+sendBtn.addEventListener('click', sendMessage);
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') sendMessage();
+});
+</script>
+
+</body>
+</html>
