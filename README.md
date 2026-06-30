@@ -5,6 +5,17 @@ running code), with no dependency on Claude Code, Aider, or any paid API.
 Built as a fully local alternative for cases where a commercial coding
 assistant isn't available or desired.
 
+## A note on authorship
+
+The infrastructure decisions, debugging, and architecture in this project
+are mine: setting up WSL2/CUDA/Docker from scratch, diagnosing the
+tool-calling model/parser mismatch, designing the orchestrator pattern, and
+the RAG retrieval failure analysis. The code itself was written with AI
+assistance (Claude), as is increasingly standard practice. I'm not claiming
+to have hand-typed every line — what I can account for is *why* each piece
+exists and *how* to debug it when it breaks, which is documented throughout
+this README and `RUNBOOK.md`.
+
 ## Architecture
 
 ```
