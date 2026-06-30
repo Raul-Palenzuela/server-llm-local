@@ -1,96 +1,118 @@
-# Servidor LLM local con vLLM (Docker)
+# Local LLM Server with Tool-Calling Backend
 
-Servidor de inferencia propio, reproducible en cualquier máquina con GPU NVIDIA.
-Sirve un modelo cuantizado (AWQ) vía API compatible OpenAI. Sin depender de APIs de pago.
+A self-hosted AI assistant capable of acting on the filesystem (creating and
+running code), with no dependency on Claude Code, Aider, or any paid API.
+Built as a fully local alternative for cases where a commercial coding
+assistant isn't available or desired.
 
-## Por qué este proyecto existe
+## Architecture
 
-Montar vLLM "a pelo" (sin Docker) requiere hacer coincidir manualmente: versión de CUDA,
-versión de GCC, versión de Python, y arquitectura de GPU. Un solo desajuste rompe todo
-el arranque. Este repo usa la imagen oficial de vLLM, que ya trae todo precompilado y
-correcto, para que levantar el servidor sea un único comando, siempre.
+```
+[Browser]                  [Backend]                  [Inference server]
+chat-orchestrated.html  →  backend.py (FastAPI)  →    vLLM (Docker)
+                            decides: chat or             Qwen2.5-7B
+                            action, executes it          with tool-calling
+                            write_file / run_command
+                                  ↓
+                            Real filesystem
+                            (create, edit, execute)
+```
 
-## Requisitos del host (una vez por máquina nueva)
+Three independent components:
 
-- GPU NVIDIA con al menos 8GB VRAM
-- Docker instalado
-- NVIDIA Container Toolkit instalado (ver instalación abajo)
-- Si es Windows: WSL2 con Ubuntu
+1. **vLLM (Docker)** — serves the model through an OpenAI-compatible API.
+   Generates text and, when appropriate, a structured function call
+   (`tool_calls`). Cannot touch anything on its own.
+2. **backend.py** — receives the user request, forwards it to the model. If
+   the model requests a tool (`write_file`, `run_command`), the backend
+   executes the corresponding action on disk and returns the result to the
+   model for the final response.
+3. **chat-orchestrated.html** — frontend. Sends/displays text and logs which
+   actions were executed and their result.
 
-### Instalar Docker (dentro de WSL2 o Linux nativo)
-\`\`\`bash
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
-sudo usermod -aG docker $USER
-# cierra y reabre la terminal
-\`\`\`
+## Why not just use Aider
 
-### Instalar NVIDIA Container Toolkit (permite que Docker vea la GPU)
-\`\`\`bash
-sudo apt install -y nvidia-container-toolkit
-sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
-\`\`\`
+Aider is built specifically for code editing in a repo (diff-based edits,
+auto-commits), which biases it toward treating every message as a code
+change request. A general-purpose assistant (read system state, run a
+script, create a file and report back) needs its own orchestration layer
+without that bias — hence the custom backend.
 
-### Verificar que Docker ve la GPU
-\`\`\`bash
-docker run --rm --gpus all nvidia/cuda:12.9.0-base-ubuntu24.04 nvidia-smi
-\`\`\`
-Si muestra tu GPU, todo lo de abajo funciona sin más pasos.
+## Tool-calling: model/parser compatibility
 
-## Uso
+The initial model tested (`Qwen2.5-Coder-7B-Instruct-AWQ`) understood tasks
+correctly but returned the function call as plain text wrapped in invented
+tags instead of a structured `tool_calls` field, regardless of which vLLM
+parser was configured (`hermes`, `qwen3_coder`).
 
-\`\`\`bash
-git clone <este-repo>
-cd mi-servidor-llm
+Root cause: tool-calling requires three pieces to match exactly — the model
+(trained for a specific call format), the vLLM parser (translates that
+format into the `tool_calls` field), and the chat template embedded in the
+checkpoint. This particular AWQ build of the "Coder" variant didn't carry a
+correctly aligned template.
+
+Fix: switched to `Qwen2.5-7B-Instruct-AWQ` (general-purpose, non-code-specialized)
+with `--tool-call-parser hermes`. Verified with:
+
+```bash
+curl -s http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "Qwen/Qwen2.5-7B-Instruct-AWQ", "messages": [...], "tools": [...], "tool_choice": "auto"}'
+```
+Expected: `"content": null`, populated `"tool_calls"`, `"finish_reason": "tool_calls"`.
+
+## Requirements
+
+- NVIDIA GPU, 8GB+ VRAM
+- Docker + NVIDIA Container Toolkit (see `RUNBOOK.md` for full setup)
+- Python 3.10+ for the backend (virtual environment recommended)
+
+## Usage
+
+**1. Start the model server:**
+```bash
 docker compose up
-\`\`\`
+```
 
-Servidor disponible en `http://localhost:8000/v1` (API compatible OpenAI).
-La primera vez descarga el modelo (~5GB AWQ), tarda unos minutos. Las siguientes
-veces es instantáneo gracias al volumen `huggingface-cache`.
+**2. Start the backend:**
+```bash
+python3 -m venv backend-env
+source backend-env/bin/activate
+pip install fastapi uvicorn httpx
+python3 backend.py
+```
 
-Para pararlo:
-\`\`\`bash
-docker compose down
-\`\`\`
+**3. Open the frontend:**
+Open `chat-orchestrated.html` in a browser.
 
-## Probar que funciona
+## Verifying actions are real
 
-\`\`\`bash
-curl http://localhost:8000/v1/chat/completions \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "model": "Qwen/Qwen2.5-Coder-7B-Instruct-AWQ",
-    "messages": [{"role": "user", "content": "di hola"}]
-  }'
-\`\`\`
+```bash
+ls ~/test-vllm/
+cat ~/test-vllm/<filename>
+```
+If the file exists with the expected content, the action was executed by
+the backend on disk — not just described by the model.
 
-## Conectar herramientas de código (Aider)
+## Available tools
 
-\`\`\`bash
-pip install aider-chat
-export OPENAI_API_BASE="http://localhost:8000/v1"
-export OPENAI_API_KEY="no-hace-falta"
-aider --model openai/Qwen/Qwen2.5-Coder-7B-Instruct-AWQ
-\`\`\`
+| Tool | Description |
+|---|---|
+| `write_file` | Creates or overwrites a file in the workspace |
+| `run_command` | Runs a shell command inside the workspace (15s timeout) |
 
-## Cambiar de modelo
+Extend via `TOOLS` and `ACTIONS` in `backend.py`.
 
-Edita `command:` en `docker-compose.yml`, cambia el nombre del modelo (cualquier
-repo de Hugging Face compatible con vLLM), y `docker compose up` de nuevo.
+## Known limitations
 
-## Por qué AWQ y no el modelo completo
+- 7B model: reliable for simple tasks, unreliable for complex reasoning or
+  specific factual claims.
+- `run_command` executes whatever the model decides; the workspace is
+  confined to a single directory but there is no process-level sandboxing.
+  Do not expose this to the internet without adding further isolation.
+- No persistent memory across browser sessions.
 
-Un modelo de 7B sin cuantizar ocupa ~14GB en VRAM. La versión AWQ ocupa ~5GB,
-permitiendo correr en GPUs de consumo (8-12GB) con margen de sobra para el
-KV cache de varias peticiones concurrentes (continuous batching).
+## See also
 
-## Arquitectura
-
-\`\`\`
-[Tu app / Aider / curl] → http://localhost:8000/v1 → [contenedor vLLM] → GPU
-\`\`\`
-
-El contenedor aísla CUDA/GCC/Python del sistema operativo del host. El host solo
-necesita drivers NVIDIA + Docker + NVIDIA Container Toolkit.
+- `RUNBOOK.md` — exact commands to reproduce the full setup on a new
+  machine, including a table of common errors and root causes.
