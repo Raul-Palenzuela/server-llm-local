@@ -90,11 +90,11 @@ docker compose up
 python3 -m venv backend-env
 source backend-env/bin/activate
 pip install fastapi uvicorn httpx
-python3 backend.py
+python3 orchestrator/backend.py
 ```
 
 **3. Open the frontend:**
-Open `chat-orchestrated.html` in a browser.
+Open `orchestrator/chat-orchestrated.html` in a browser.
 
 ## Verifying actions are real
 
@@ -112,7 +112,7 @@ the backend on disk — not just described by the model.
 | `write_file` | Creates or overwrites a file in the workspace |
 | `run_command` | Runs a shell command inside the workspace (15s timeout) |
 
-Extend via `TOOLS` and `ACTIONS` in `backend.py`.
+Extend via `TOOLS` and `ACTIONS` in `orchestrator/backend.py`.
 
 ## Known limitations
 
@@ -127,3 +127,5 @@ Extend via `TOOLS` and `ACTIONS` in `backend.py`.
 
 - `RUNBOOK.md` — exact commands to reproduce the full setup on a new
   machine, including a table of common errors and root causes.
+- `rag/RAG.md` — optional RAG module: query a real codebase with grounded,
+  source-cited answers.
