@@ -121,7 +121,15 @@ Extend via `TOOLS` and `ACTIONS` in `orchestrator/backend.py`.
 - `run_command` executes whatever the model decides; the workspace is
   confined to a single directory but there is no process-level sandboxing.
   Do not expose this to the internet without adding further isolation.
-- No persistent memory across browser sessions.
+- **Short conversation memory**: `--max-model-len 2048` is set to fit within
+  8GB VRAM (RTX 5060 laptop). This caps the total tokens per request —
+  system prompt + RAG context + conversation history + response. In practice,
+  conversations run out of context after 3-4 turns when RAG context is
+  included. On hardware with more VRAM (12GB+), raising this to 4096 or
+  8192 would fix it. The correct production solution is automatic history
+  summarization, which is documented as a known next step.
+- No persistent memory across browser sessions (by design — each session is
+  isolated in RAM and disappears on close).
 
 ## See also
 
